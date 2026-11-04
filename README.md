@@ -1,40 +1,72 @@
-# CineMatch
+# 🎬 CineMatch
 
-CineMatch helps you find movies you'll actually want to watch. It pulls movie data from the TMDB API, stores it in a Postgres database, and uses it to match you with films based on what you like.
+A movie recommendation web app: *"If you liked this movie, you might also like…"*.
+Users mark the movies they've watched (with an optional rating), and CineMatch suggests similar movies — never recommending ones they've already seen.
 
-Built with Python, PostgreSQL (hosted on Neon) and the TMDB API.
+## Features
+- Browse and search thousands of popular movies (data from TMDB)
+- Movie detail page with poster, genres, director, cast and similar-movie suggestions
+- Mark movies as watched and rate them 1–5★
+- Personalized recommendations based on your full watch history
+- Watched movies are automatically excluded from all recommendations
 
-## Setup
+## How it works
+1. **ETL** – `scripts/sync_movies.py` pulls popular movies from the TMDB `/discover/movie` endpoint, then enriches each one with genres, director and top cast via `/movie/{id}?append_to_response=credits`, and stores everything in PostgreSQL.
+2. **Content-based filtering** – each movie's genres, director, cast and overview are combined and vectorized with **TF-IDF**; similarity is measured with **cosine similarity**.
+3. **Personalization** – a user profile is built as a rating-weighted average of the movies they liked, then compared against all movies. Anything in the user's `watched` table is filtered out.
 
-Clone the repo and install the dependencies:
+## Tech stack
+Python · Flask · SQLAlchemy · Flask-Login · PostgreSQL (Neon) · pandas · scikit-learn · TMDB API · Bootstrap
 
+## Project structure
 ```
-git clone <repo-url>
-cd CineMatch
-py -m venv .venv
-.venv\Scripts\activate
+app/
+├── __init__.py       # app factory
+├── models.py         # User, Movie, Watched
+├── tmdb.py           # TMDB API client
+├── recommender.py    # TF-IDF recommendation engine
+├── routes.py         # web routes
+└── templates/
+scripts/
+└── sync_movies.py    # TMDB → PostgreSQL pipeline
+run.py
+```
+
+## Getting started
+**1. Clone and install**
+```bash
+git clone https://github.com/<your-username>/cinematch.git
+cd cinematch
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-On macOS/Linux, use `python3 -m venv .venv` and `source .venv/bin/activate` instead.
-
-Create a `.env` file in the project folder:
-
+**2. Configure environment** — create a `.env` file:
 ```
-TMDB_API_KEY=your_tmdb_key
-DATABASE_URL=your_neon_connection_string
-SECRET_KEY=any_long_random_string
+TMDB_API_KEY=your_tmdb_api_key
+DATABASE_URL=postgresql://<user>:<password>@<host>/<db>?sslmode=require
+SECRET_KEY=a_long_random_string
+```
+Get a free API key at [themoviedb.org](https://www.themoviedb.org/settings/api) and a Postgres connection string from [Neon](https://neon.tech).
+
+**3. Create tables and load movies**
+```bash
+export FLASK_APP=run.py
+flask db upgrade
+python scripts/sync_movies.py
 ```
 
-- **TMDB_API_KEY**: make a free account on themoviedb.org, then go to Settings → API.
-- **DATABASE_URL**: create a project on neon.com and copy the connection string from the Connect button. Keep `?sslmode=require` at the end.
-- **SECRET_KEY**: generate one with `python -c "import secrets; print(secrets.token_hex(32))"`
+**4. Run**
+```bash
+flask run --debug
+```
+Open http://127.0.0.1:5000
 
-## Notes
+## Roadmap
+- Onboarding: pick favorite movies to solve cold start
+- Collaborative filtering ("users who liked A also liked B")
+- Sentence embeddings + pgvector for better similarity
+- Scheduled weekly sync of new movies
 
-- The first query after a while can be slow because Neon's free tier sleeps when idle.
-- Don't commit your `.env` file.
-
-## Credits
-
-Movie data from TMDB. This product uses the TMDB API but is not endorsed or certified by TMDB.
+## Attribution
+This product uses the TMDB API but is not endorsed or certified by TMDB.
