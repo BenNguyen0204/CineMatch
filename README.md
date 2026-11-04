@@ -37,7 +37,17 @@ run.py
 ```bash
 git clone https://github.com/<your-username>/cinematch.git
 cd cinematch
-python -m venv venv && source venv/bin/activate
+python -m venv venv
+```
+Activate the virtual environment:
+```bash
+# Windows (PowerShell)
+.\venv\Scripts\Activate.ps1
+# macOS / Linux
+source venv/bin/activate
+```
+Then install dependencies:
+```bash
 pip install -r requirements.txt
 ```
 
@@ -46,12 +56,15 @@ pip install -r requirements.txt
 TMDB_API_KEY=your_tmdb_api_key
 DATABASE_URL=postgresql://<user>:<password>@<host>/<db>?sslmode=require
 SECRET_KEY=a_long_random_string
+FLASK_APP=run.py
 ```
-Get a free API key at [themoviedb.org](https://www.themoviedb.org/settings/api) and a Postgres connection string from [Neon](https://neon.tech).
+Get a free API key at [themoviedb.org](https://www.themoviedb.org/settings/api) and a Postgres connection string from [Neon](https://neon.tech). Generate a `SECRET_KEY` with:
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
 
 **3. Create tables and load movies**
 ```bash
-export FLASK_APP=run.py
 flask db upgrade
 python scripts/sync_movies.py
 ```
@@ -63,10 +76,10 @@ flask run --debug
 Open http://127.0.0.1:5000
 
 ## Roadmap
-- Onboarding: pick favorite movies to solve cold start
-- Collaborative filtering ("users who liked A also liked B")
-- Sentence embeddings + pgvector for better similarity
-- Scheduled weekly sync of new movies
+- [ ] Onboarding: pick favorite movies to solve cold start
+- [ ] Collaborative filtering ("users who liked A also liked B")
+- [ ] Sentence embeddings + pgvector for better similarity
+- [ ] Scheduled weekly sync of new movies
 
 ## Attribution
 This product uses the TMDB API but is not endorsed or certified by TMDB.

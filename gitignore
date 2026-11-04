@@ -1,20 +1,21 @@
-# Secrets
-.env
-
 # Virtual environment
-.venv/
 venv/
 
-# Python
+# Secrets (API keys, database URL, SECRET_KEY)
+.env
+
+# Python cache
 __pycache__/
 *.pyc
+.pytest_cache/
 
-# Editors / OS
+# Editor / OS files
 .vscode/
 .idea/
-.DS_Store
 Thumbs.db
+.DS_Store
 
-# Logs and local data
-*.log
-*.csv
+# CLAUDE
+CLAUDE.md
+docs/PROGRESS.md
+docs/DECISIONS.md
