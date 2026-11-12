@@ -1,8 +1,12 @@
+# Secrets
+.env
+
 # Virtual environment
+.venv/
 venv/
 
-# Secrets (API keys, database URL, SECRET_KEY)
-.env
+# Personal notes
+notes/
 
 # Python cache
 __pycache__/
@@ -14,8 +18,3 @@ __pycache__/
 .idea/
 Thumbs.db
 .DS_Store
-
-# CLAUDE
-CLAUDE.md
-docs/PROGRESS.md
-docs/DECISIONS.md
