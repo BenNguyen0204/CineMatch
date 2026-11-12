@@ -35,58 +35,6 @@ Movie data comes from the TMDB API and is synced into my own database, so the re
 - Sign up and log in, each user only sees their own ratings
 - Display name and password change
 
-## Architecture
-
-```mermaid
-flowchart LR
-    subgraph Offline["Offline jobs (run by hand or on a schedule)"]
-        TMDB[(TMDB API)] -->|movies, genres,<br/>keywords, credits| SYNC[scripts/sync_movies.py]
-        BUILD[scripts/build_similarity.py]
-    end
-
-    subgraph Server["Flask app on Render (gunicorn)"]
-        PAGES[pages.py<br/>main page, /healthz]
-        AUTH[auth.py<br/>sign up, log in]
-        API[api.py<br/>REST API]
-        REC[recommender.py<br/>TF-IDF + cosine similarity]
-        MODELS[models.py<br/>SQLAlchemy]
-        API --> REC
-        API --> MODELS
-        AUTH --> MODELS
-        REC --> MODELS
-    end
-
-    DB[(PostgreSQL<br/>on Neon)]
-    VEC[[TF-IDF vectors]]
-
-    SYNC -->|upsert| DB
-    DB --> BUILD
-    BUILD --> VEC
-    VEC --> REC
-    MODELS <--> DB
-
-    subgraph Browser
-        UI[index.html<br/>vanilla JS + CSS]
-    end
-
-    UI -->|load page| PAGES
-    UI -->|log in| AUTH
-    UI <-->|JSON + CSRF token| API
-    UI -.->|poster images| IMG[(TMDB image CDN)]
-```
-
-- **Offline jobs** fill the database and build the recommendation data, so a page load never waits on TMDB.
-- **The Flask app** serves one page (`index.html`); after that, the browser talks to the server only through the JSON API.
-- **The recommender** reads the precomputed TF-IDF vectors and the user's ratings from the database, then returns movie ids for the API to look up.
-- **Posters** load straight from TMDB's image CDN, so the server never stores images.
-
-## How recommendations work
-
-1. `scripts/sync_movies.py` pulls movies, genres, keywords and credits from TMDB into PostgreSQL. It's safe to run again: existing movies are updated, not duplicated.
-2. `scripts/build_similarity.py` builds a text profile for every movie (genres, keywords, top cast, director, overview), turns the profiles into TF-IDF vectors and saves them.
-3. **Similar movies:** the movies whose vectors are closest by cosine similarity.
-4. **For you:** similarity scores added up across your highly rated movies, minus anything you've already rated, with a minimum vote count so obscure films don't take over.
-
 ## Tech stack
 
 | Part | Tools |
@@ -99,6 +47,107 @@ flowchart LR
 | Frontend | HTML, CSS, vanilla JavaScript (no framework) |
 | Testing | pytest, pytest-cov |
 | Deployment | Render (gunicorn), Neon |
+
+## Architecture
+
+```mermaid
+flowchart TB
+    User(["Browser<br/>(desktop or phone)"])
+    subgraph Render["Render (gunicorn)"]
+        Pages["pages + auth<br/>HTML pages, log in / sign up"]
+        API["api<br/>REST JSON"]
+        Rec["recommender<br/>TF-IDF + cosine similarity"]
+    end
+    DB[("PostgreSQL<br/>on Neon")]
+    Vec[["TF-IDF vectors"]]
+    subgraph Jobs["Offline scripts"]
+        Sync["sync_movies.py"]
+        Build["build_similarity.py"]
+    end
+    TMDB["TMDB API"]
+    CDN["TMDB image CDN"]
+
+    User -- "page load, forms" --> Pages
+    User -- "fetch + CSRF token" --> API
+    User -- "poster images" --> CDN
+    Pages --> DB
+    API -- "SQLAlchemy, ratings scoped to current_user" --> DB
+    API --> Rec
+    Rec --> Vec
+    TMDB -- "movies, genres, keywords, credits" --> Sync
+    Sync -- "upsert" --> DB
+    DB --> Build --> Vec
+```
+
+**How a request goes**
+
+1. The browser loads `/` once. Flask renders `index.html` with the CSRF token in a `<meta>` tag.
+2. After that the JavaScript only talks to `/api/...` with `fetch`, sending the token in an `X-CSRFToken` header.
+3. Flask-Login reads the session cookie. Every rating query filters by `current_user.id`, so nobody can read or change someone else's ratings.
+4. For recommendations, the API passes the user's ratings to the recommender, which scores movies with the precomputed vectors and returns movie ids. The API then loads those movies from the database.
+5. Posters load straight from TMDB's image CDN, so the server never stores images.
+
+**Code layout**
+
+- `create_app()` builds the app, so tests can make a fresh one with their own config
+- 3 blueprints: `pages`, `auth` and `api` (under `/api`)
+- The recommender is plain Python with no Flask code, so it can be tested on its own
+- Database changes go through Flask-Migrate, and Render runs `db upgrade` on every deploy
+
+**Data model**
+
+```mermaid
+erDiagram
+    USER ||--o{ RATING : gives
+    MOVIE ||--o{ RATING : receives
+    MOVIE }o--o{ GENRE : "has (movie_genres)"
+    MOVIE }o--o{ KEYWORD : "has (movie_keywords)"
+    MOVIE }o--o{ PERSON : "cast (movie_cast)"
+    USER {
+        int id
+        string username
+        string display_name
+        string password_hash
+    }
+    MOVIE {
+        int tmdb_id
+        string title
+        string overview
+        date release_date
+        string poster_path
+        float vote_average
+        int vote_count
+        float popularity
+        string director
+    }
+    RATING {
+        int user_id
+        int tmdb_id
+        int rating
+        datetime created_at
+    }
+    GENRE {
+        int id
+        string name
+    }
+    KEYWORD {
+        int id
+        string name
+    }
+    PERSON {
+        int id
+        string name
+    }
+```
+
+Movies use TMDB's own ids, so syncing again updates a movie instead of adding a copy. Each user can rate a movie only once (1 to 5), and deleting a user deletes their ratings.
+
+## How recommendations work
+
+1. `scripts/sync_movies.py` pulls movies, genres, keywords and credits from TMDB into PostgreSQL. It's safe to run again: existing movies are updated, not duplicated.
+2. `scripts/build_similarity.py` builds a text profile for every movie (genres, keywords, top cast, director, overview), turns the profiles into TF-IDF vectors and saves them.
+3. **Similar movies:** the movies whose vectors are closest by cosine similarity.
+4. **For you:** similarity scores added up across your highly rated movies, minus anything you've already rated, with a minimum vote count so obscure films don't take over.
 
 ## Security
 
@@ -165,53 +214,20 @@ Routes marked with a lock need a logged-in user. All routes return JSON.
 
 ```text
 app/
-  __init__.py          app factory, config, security settings
-  extensions.py        db, migrate, login manager, csrf, limiter
-  models.py            User, Movie, Genre, Keyword, Person, Rating
-  api.py               REST API: movies, ratings, recommendations, account
-  auth.py              sign up, log in, log out
-  pages.py             main page, /healthz
-  recommender.py       TF-IDF similarity and recommendations
-  tmdb.py              TMDB API client
-  templates/
-    index.html         the app: sidebar + main panel
-    auth.html          log in / sign up
-  static/
-    styles/
-      variables.css    colors, font, light and dark theme
-      base.css         reset, body, buttons
-      sidebar.css      sidebar: Home, Search, My ratings, For you
-      app.css          main panel: top bar, search box, filter and sort menus
-      movies.css       movie cards, poster grid, movie page, star rating
-      toast.css        pop-up messages
-      auth.css         log in / sign up page
-      mobile.css       phone layout
-    scripts/
-      main.js          starts the app, switches between views
-      api.js           fetch helpers, sends the CSRF token
-      sidebar.js       sidebar navigation
-      movieRender.js   draws movie cards and the movie page
-      search.js        search box, genre filter, sort
-      rating.js        star rating clicks
-      account.js       account panel: display name, password
-      theme.js         dark mode
-      toast.js         pop-up messages
-      mobile.js        phone navigation and back gesture
-    images/            icons (filter, sort, dark mode, star)
-scripts/
-  sync_movies.py       TMDB -> database
-  build_similarity.py  precomputes the TF-IDF vectors
-migrations/            database migrations
-tests/
-  test_app.py          routes, auth, ratings
-  test_recommender.py  recommender
-docs/screenshots/      images for this README
-wsgi.py                entry point for gunicorn
-requirements.txt       packages for the server
-requirements-dev.txt   + pytest, for development
-pytest.ini
-.env.example           copy to .env and fill in
-.gitignore             keeps .env, .venv/ and notes/ out of Git
+  __init__.py      app factory, config, security settings
+  extensions.py    db, migrate, login manager, csrf, limiter
+  models.py        User, Movie, Genre, Keyword, Person, Rating
+  api.py           REST API: movies, ratings, recommendations
+  auth.py          sign up, log in, log out
+  pages.py         main page, /healthz
+  recommender.py   TF-IDF similarity and recommendations
+  tmdb.py          TMDB API client
+  templates/       HTML
+  static/          CSS, JavaScript, images
+scripts/           TMDB sync, building the recommendation data
+migrations/        database migrations
+tests/             pytest suite
+wsgi.py            entry point for gunicorn
 ```
 
 ## Deployment
